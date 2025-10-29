@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Info-mate</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>💬 Info-mate</h1>
+            <div class="controls">
+                <select id="modelSelect">
+                    <option value="gemma3:4b" selected>gemma3:4b</option>
+                    <option value="llama3">llama3</option>
+                    <option value="mistral">mistral</option>
+                    <option value="codellama">codellama</option>
+                    <option value="deepseek-r1:8b">deepseek-r1:8b</option>
+                </select>
+                <select id="sessionSelect">
+                    <option value="default" selected>default</option>
+                    <option value="work">work</option>
+                    <option value="personal">personal</option>
+                    <option value="code">code</option>
+                </select>
+                <button id="newSessionBtn" class="btn-secondary">New Session</button>
+                <button id="resetBtn" class="btn-secondary">Reset</button>
+                <button id="settingsBtn" class="btn-secondary">⚙️ Settings</button>
+            </div>
+        </header>
+
+        <div class="chat-container">
+            <div id="chatMessages" class="chat-messages">
+                <div class="welcome-message">
+                    <h2>Welcome to Info-mate</h2>
+                    <p>Start a conversation by typing a message below.</p>
+                    <p class="info-text">💡 Tip: Use commands like /help, /reset, or /history</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-input-container">
+            <div class="input-wrapper">
+                <textarea 
+                    id="messageInput" 
+                    placeholder="Type your message here... (Use /help for commands)" 
+                    rows="3"
+                ></textarea>
+                <button id="sendBtn" class="btn-primary">
+                    <span>Send</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+            <div class="input-footer">
+                <span class="status" id="statusText">Ready</span>
+                <span class="shortcuts">Press Enter to send • Shift+Enter for new line</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ Settings</h2>
+                <button class="close-btn" id="closeModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="temperature">Temperature:</label>
+                    <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.6">
+                    <span id="tempValue">0.6</span>
+                </div>
+                <div class="setting-group">
+                    <label for="systemPrompt">System Prompt:</label>
+                    <textarea id="systemPrompt" rows="4">You are a concise assistant. Respond ONLY in English. Do not greet, do not introduce yourself, and do not mention gemma3/OpenAI or any affiliations. Answer directly and briefly unless the user asks for details.</textarea>
+                </div>
+                <div class="setting-group">
+                    <label for="maxContext">Max Context Length:</label>
+                    <input type="number" id="maxContext" value="8192" min="1024" max="32768">
+                </div>
+                <div class="setting-group">
+                    <label for="maxPredict">Max Predictions:</label>
+                    <input type="number" id="maxPredict" value="256" min="64" max="2048">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelSettings">Cancel</button>
+                <button class="btn-primary" id="saveSettings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
