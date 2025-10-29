@@ -134,3 +134,98 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	response.Response = assistantText
 	json.NewEncoder(w).Encode(response)
 }
+func getSessionHandler(w http.ResponseWriter, r *http.Request) {
+	// CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionName := filepath.Base(r.URL.Path)
+	sessPath := sessionPathServer(sessionName)
+
+	messages, err := loadMessagesServer(sessPath)
+	if err != nil {
+		messages = []api.Message{}
+	}
+
+	data := SessionData{Messages: messages}
+	json.NewEncoder(w).Encode(data)
+}
+
+func resetHandler(w http.ResponseWriter, r *http.Request) {
+	// CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionName := filepath.Base(r.URL.Path)
+	sessPath := sessionPathServer(sessionName)
+
+	// Save empty session
+	messages := []api.Message{}
+	if err := saveMessagesServer(sessPath, messages); err != nil {
+		http.Error(w, "Failed to reset", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// sessionPathServer returns the full path to the session file
+func sessionPathServer(name string) string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".ollama-chat", "sessions")
+	os.MkdirAll(dir, 0755)
+	return filepath.Join(dir, name+".json")
+}
+
+// loadMessagesServer loads messages from a session file
+func loadMessagesServer(path string) ([]api.Message, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var messages []api.Message
+	if err := json.Unmarshal(data, &messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// saveMessagesServer saves messages to a session file
+func saveMessagesServer(path string, messages []api.Message) error {
+	data, err := json.MarshalIndent(messages, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// thinkBoolServer converts a bool to *api.ThinkValue
+func thinkBoolServer(b bool) *api.ThinkValue {
+	v := new(api.ThinkValue)
+	bs, _ := json.Marshal(b)
+	_ = v.UnmarshalJSON(bs)
+	return v
+}
