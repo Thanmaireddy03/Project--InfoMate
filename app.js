@@ -1,410 +1,338 @@
-// Configuration
-const CONFIG = {
-    apiBaseUrl: 'http://localhost:8080',
-    defaultModel: 'gemma3:4b',
-    defaultSession: 'default',
-    temperature: 0.6,
-    systemPrompt: 'You are a concise assistant. Respond ONLY in English. Do not greet, do not introduce yourself, and do not mention gemma3/OpenAI or any affiliations. Answer directly and briefly unless the user asks for details.',
-    maxContext: 8192,
-    maxPredict: 256
-};
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import axios from 'axios';
+import { Send, Upload, Settings, ToggleLeft, ToggleRight } from 'lucide-react';
+import './App.css';
 
-// State
-let currentModel = CONFIG.defaultModel;
-let currentSession = CONFIG.defaultSession;
-let isProcessing = false;
-let chatHistory = [];
+const API_BASE = 'http://localhost:8080/api';
 
-// DOM Elements
-const chatMessages = document.getElementById('chatMessages');
-const messageInput = document.getElementById('messageInput');
-const sendBtn = document.getElementById('sendBtn');
-const modelSelect = document.getElementById('modelSelect');
-const sessionSelect = document.getElementById('sessionSelect');
-const resetBtn = document.getElementById('resetBtn');
-const newSessionBtn = document.getElementById('newSessionBtn');
-const settingsBtn = document.getElementById('settingsBtn');
-const settingsModal = document.getElementById('settingsModal');
-const closeModal = document.getElementById('closeModal');
-const saveSettings = document.getElementById('saveSettings');
-const cancelSettings = document.getElementById('cancelSettings');
-const statusText = document.getElementById('statusText');
-const temperature = document.getElementById('temperature');
-const tempValue = document.getElementById('tempValue');
-const systemPrompt = document.getElementById('systemPrompt');
-const maxContext = document.getElementById('maxContext');
-const maxPredict = document.getElementById('maxPredict');
-
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-    initializeApp();
-});
-
-function initializeApp() {
-    setupEventListeners();
-    loadSession();
-    updateTempValue();
-}
-
-function setupEventListeners() {
-    // Send button
-    sendBtn.addEventListener('click', sendMessage);
-    
-    // Enter to send, Shift+Enter for new line
-    messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
-
-    // Model and session changes
-    modelSelect.addEventListener('change', (e) => {
-        currentModel = e.target.value;
-        statusText.textContent = `Model changed to ${currentModel}`;
-    });
-
-    sessionSelect.addEventListener('change', async (e) => {
-        currentSession = e.target.value;
-        await loadSession();
-        statusText.textContent = `Switched to session: ${currentSession}`;
-    });
-
-    // Reset conversation
-    resetBtn.addEventListener('click', async () => {
-        if (confirm('Are you sure you want to reset this conversation?')) {
-            await resetConversation();
-        }
-    });
-
-    // New session
-    newSessionBtn.addEventListener('click', () => {
-        const sessionName = prompt('Enter a name for the new session:');
-        if (sessionName && sessionName.trim()) {
-            currentSession = sessionName.trim();
-            sessionSelect.value = currentSession;
-            resetConversation();
-        }
-    });
-
-    // Settings modal
-    settingsBtn.addEventListener('click', openSettingsModal);
-    closeModal.addEventListener('click', closeSettingsModal);
-    cancelSettings.addEventListener('click', closeSettingsModal);
-    saveSettings.addEventListener('click', saveSettingsData);
-    
-    // Temperature slider
-    temperature.addEventListener('input', updateTempValue);
-    
-    // Close modal on outside click
-    window.addEventListener('click', (e) => {
-        if (e.target === settingsModal) {
-            closeSettingsModal();
-        }
+// Simple markdown parser function
+function parseMarkdown(text) {
+  if (!text) return '';
+  
+  return text
+    // Bold text **text** -> <strong>text</strong>
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // Italic text *text* -> <em>text</em>
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    // Bullet points * item -> <li>item</li>
+    .replace(/^\* (.+)$/gm, '<li>$1</li>')
+    // Numbered lists 1. item -> <li>item</li>
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    // Line breaks
+    .replace(/\n/g, '<br/>')
+    // Wrap consecutive <li> elements in <ul>
+    .replace(/(<li>.*<\/li>)/gs, (match) => {
+      const items = match.split('</li>').filter(item => item.trim()).map(item => item + '</li>');
+      return `<ul>${items.join('')}</ul>`;
     });
 }
 
-function updateTempValue() {
-    tempValue.textContent = temperature.value;
-}
+function App() {
+  const [messages, setMessages] = useState([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [session, setSession] = useState('default');
+  const [sessions, setSessions] = useState(['default']);
+  const [ragEnabled, setRagEnabled] = useState(true);
+  const [model, setModel] = useState('gemma3:4b');
+  const [availableModels] = useState(['gemma3:4b', 'llama3.1:8b', 'deepseek-r1:1.5b']);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfStatus, setPdfStatus] = useState('');
+  const [context, setContext] = useState({});
+  const messagesEndRef = useRef(null);
 
-function openSettingsModal() {
-    settingsModal.style.display = 'block';
-    temperature.value = CONFIG.temperature;
-    updateTempValue();
-    systemPrompt.value = CONFIG.systemPrompt;
-    maxContext.value = CONFIG.maxContext;
-    maxPredict.value = CONFIG.maxPredict;
-}
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
-function closeSettingsModal() {
-    settingsModal.style.display = 'none';
-}
-
-function saveSettingsData() {
-    CONFIG.temperature = parseFloat(temperature.value);
-    CONFIG.systemPrompt = systemPrompt.value;
-    CONFIG.maxContext = parseInt(maxContext.value);
-    CONFIG.maxPredict = parseInt(maxPredict.value);
-    statusText.textContent = 'Settings saved';
-    closeSettingsModal();
-}
-
-async function sendMessage() {
-    const message = messageInput.value.trim();
-    
-    if (!message || isProcessing) {
-        return;
+  const loadSessions = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/sessions`);
+      setSessions(response.data.sessions || ['default']);
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
     }
+  };
 
-    // Handle commands
-    if (message.startsWith('/')) {
-        await handleCommand(message);
-        messageInput.value = '';
-        return;
+  const loadContext = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/context?session=${session}`);
+      setContext(response.data);
+      setRagEnabled(response.data.ragEnabled || false);
+      setModel(response.data.model || 'gemma3:4b');
+    } catch (error) {
+      console.error('Failed to load context:', error);
     }
+  }, [session]);
 
-    // Clear input and add user message
-    messageInput.value = '';
-    addMessage('user', message);
-    isProcessing = true;
-    updateSendButton();
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-    // Show typing indicator
-    const typingId = showTypingIndicator();
+  useEffect(() => {
+    loadSessions();
+    loadContext();
+  }, [loadContext]);
+
+  const createSession = async () => {
+    const newSession = prompt('Enter session name:');
+    if (newSession && !sessions.includes(newSession)) {
+      try {
+        await axios.post(`${API_BASE}/sessions`, { name: newSession });
+        setSessions([...sessions, newSession]);
+        setSession(newSession);
+        setMessages([]);
+        await loadContext();
+      } catch (error) {
+        console.error('Failed to create session:', error);
+        alert('Failed to create session');
+      }
+    }
+  };
+
+  const switchSession = async (newSession) => {
+    setSession(newSession);
+    setMessages([]);
+    await loadContext();
+  };
+
+  const toggleRag = async () => {
+    try {
+      const newRagState = !ragEnabled;
+      await axios.post(`${API_BASE}/rag`, { 
+        session, 
+        enabled: newRagState 
+      });
+      setRagEnabled(newRagState);
+    } catch (error) {
+      console.error('Failed to toggle RAG:', error);
+    }
+  };
+
+  const changeModel = async (newModel) => {
+    try {
+      await axios.post(`${API_BASE}/model`, { 
+        session, 
+        model: newModel 
+      });
+      setModel(newModel);
+    } catch (error) {
+      console.error('Failed to change model:', error);
+    }
+  };
+
+  const uploadPdf = async () => {
+    if (!pdfFile) return;
+    
+    const formData = new FormData();
+    formData.append('file', pdfFile);
+    formData.append('session', session);
 
     try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: currentModel,
-                session: currentSession,
-                message: message,
-                temperature: CONFIG.temperature,
-                maxContext: CONFIG.maxContext,
-                maxPredict: CONFIG.maxPredict,
-                systemPrompt: CONFIG.systemPrompt
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Server error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        removeTypingIndicator(typingId);
-        
-        if (data.error) {
-            showError(data.error);
+      setIsLoading(true);
+      setPdfStatus('Uploading PDF...');
+      const response = await axios.post(`${API_BASE}/pdf`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setPdfStatus(response.data.message);
+      setRagEnabled(true);
+      await loadContext();
+    } catch (error) {
+      console.error('Failed to upload PDF:', error);
+      const serverMessage = error.response?.data;
+      if (serverMessage) {
+        if (typeof serverMessage === 'string') {
+          setPdfStatus(serverMessage);
+        } else if (serverMessage.error) {
+          setPdfStatus(serverMessage.error);
         } else {
-            addMessage('assistant', data.response);
+          setPdfStatus('Failed to upload PDF');
         }
-    } catch (error) {
-        removeTypingIndicator(typingId);
-        showError(`Failed to send message: ${error.message}. Make sure the Go backend is running on ${CONFIG.apiBaseUrl}`);
-        console.error('Error:', error);
+      } else {
+        setPdfStatus('Failed to upload PDF');
+      }
     } finally {
-        isProcessing = false;
-        updateSendButton();
+      setIsLoading(false);
     }
-}
+  };
 
-async function handleCommand(command) {
-    statusText.textContent = 'Processing command...';
-    
-    const parts = command.trim().split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1).join(' ');
+  const sendMessage = async () => {
+    if (!inputMessage.trim() || isLoading) return;
+
+    const messageToSend = inputMessage;
+    const userMessage = { role: 'user', content: messageToSend };
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+    setIsLoading(true);
 
     try {
-        switch (cmd) {
-            case '/help':
-                showHelp();
-                break;
-            case '/reset':
-                if (confirm('Are you sure you want to reset this conversation?')) {
-                    await resetConversation();
-                }
-                break;
-            case '/history':
-                showHistory();
-                break;
-            case '/model':
-                if (args) {
-                    currentModel = args;
-                    modelSelect.value = currentModel;
-                    statusText.textContent = `Model set to ${currentModel}`;
-                }
-                break;
-            case '/save':
-                await saveSession();
-                break;
-            case '/exit':
-                // Just show info in web context
-                addMessage('system', 'To exit, just close the browser tab.');
-                break;
-            default:
-                showError(`Unknown command: ${cmd}. Use /help to see available commands.`);
-        }
+      const response = await axios.post(`${API_BASE}/chat`, {
+        session,
+        message: messageToSend,
+        model,
+        ragEnabled
+      });
+
+      const assistantMessage = { role: 'assistant', content: response.data.response };
+      setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
-        showError(`Command failed: ${error.message}`);
+      console.error('Failed to send message:', error);
+      const errorMessage = { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
     }
-}
+  };
 
-function showHelp() {
-    const helpText = `/help - Show available commands
-/reset - Clear conversation context
-/history - Show conversation history
-/model [TAG] - Switch model (e.g. /model llama3)
-/save - Save current conversation
-/exit - Exit (close browser tab)`;
-
-    addMessage('assistant', helpText);
-}
-
-function showHistory() {
-    if (chatHistory.length === 0) {
-        addMessage('system', 'No conversation history yet.');
-        return;
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
     }
+  };
 
-    let historyText = 'Recent conversation:\n\n';
-    const recentMessages = chatHistory.slice(-10);
-    
-    recentMessages.forEach(msg => {
-        historyText += `${msg.role.toUpperCase()}: ${msg.content}\n\n`;
-    });
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="sidebar-header">
+          <h2>Info Mate</h2>
+          <button className="new-session-btn" onClick={createSession}>
+            <Settings size={16} />
+            New Session
+          </button>
+        </div>
 
-    addMessage('assistant', historyText);
-}
+        <div className="sessions">
+          <h3>Sessions</h3>
+          {sessions.map(s => (
+            <button
+              key={s}
+              className={`session-item ${s === session ? 'active' : ''}`}
+              onClick={() => switchSession(s)}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
 
-async function loadSession() {
-    try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/session/${currentSession}`);
-        if (response.ok) {
-            const data = await response.json();
-            chatHistory = data.messages || [];
-            
-            // Display history
-            chatMessages.innerHTML = '';
-            chatHistory.slice(1).forEach(msg => { // Skip system message
-                if (msg.role !== 'system') {
-                    addMessage(msg.role, msg.content, false);
-                }
-            });
-            
-            if (chatHistory.length <= 1) {
-                // Show welcome message if empty
-                chatMessages.innerHTML = `
-                    <div class="welcome-message">
-                        <h2>Welcome to Info-mate</h2>
-                        <p>Start a conversation by typing a message below.</p>
-                        <p class="info-text">💡 Tip: Use commands like /help, /reset, or /history</p>
-                    </div>
-                `;
-            }
-            
-            statusText.textContent = `Loaded session: ${currentSession}`;
-        }
-    } catch (error) {
-        console.error('Error loading session:', error);
-        statusText.textContent = 'Could not load session';
-    }
-}
+        <div className="settings">
+          <h3>Settings</h3>
+          
+          <div className="setting-item">
+            <label>Model:</label>
+            <select value={model} onChange={(e) => changeModel(e.target.value)}>
+              {availableModels.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
 
-async function resetConversation() {
-    try {
-        await fetch(`${CONFIG.apiBaseUrl}/reset/${currentSession}`, {
-            method: 'POST'
-        });
-        chatHistory = [];
-        chatMessages.innerHTML = '';
-        chatMessages.innerHTML = `
-            <div class="welcome-message">
-                <h2>Welcome to Info-mate</h2>
-                <p>Start a conversation by typing a message below.</p>
-                <p class="info-text">💡 Tip: Use commands like /help, /reset, or /history</p>
+          <div className="setting-item">
+            <label>RAG:</label>
+            <button className="toggle-btn" onClick={toggleRag}>
+              {ragEnabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+              {ragEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          <div className="pdf-upload">
+            <h4>PDF Upload</h4>
+            <input
+              type="file"
+              accept=".pdf"
+              onChange={(e) => setPdfFile(e.target.files[0])}
+              id="pdf-input"
+              style={{ display: 'none' }}
+            />
+            <label htmlFor="pdf-input" className="upload-btn">
+              <Upload size={16} />
+              Choose PDF
+            </label>
+            {pdfFile && (
+              <div className="pdf-info">
+                <span>{pdfFile.name}</span>
+                <button onClick={uploadPdf} disabled={isLoading}>
+                  Upload
+                </button>
+              </div>
+            )}
+            {pdfStatus && (
+              <div className="pdf-status">{pdfStatus}</div>
+            )}
+          </div>
+
+          <div className="context-info">
+            <h4>Context</h4>
+            <div className="context-details">
+              <div>RAG: {ragEnabled ? 'ON' : 'OFF'}</div>
+              <div>PDF: {context.pdfName || 'None'}</div>
+              <div>Chunks: {context.chunks || 0}</div>
             </div>
-        `;
-        statusText.textContent = 'Conversation reset';
-    } catch (error) {
-        showError(`Failed to reset: ${error.message}`);
-    }
+          </div>
+        </div>
+      </div>
+
+      <div className="main-content">
+        <div className="chat-header">
+          <h1>AI Chat</h1>
+          <div className="session-info">Session: {session}</div>
+        </div>
+
+        <div className="messages-container">
+          {messages.length === 0 ? (
+            <div className="welcome">
+              <h2>Welcome to Info Mate!</h2>
+              <p>Start a conversation or upload a PDF to get started with RAG.</p>
+            </div>
+          ) : (
+            messages.map((message, index) => (
+              <div key={index} className={`message ${message.role}`}>
+                <div className="message-content">
+                  {message.role === 'assistant' ? (
+                    <div dangerouslySetInnerHTML={{ __html: parseMarkdown(message.content) }} />
+                  ) : (
+                    message.content
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+          {isLoading && (
+            <div className="message assistant">
+              <div className="message-content">
+                <div className="typing-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="input-container">
+          <div className="input-wrapper">
+            <textarea
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type your message here..."
+              disabled={isLoading}
+              rows="1"
+            />
+            <button
+              onClick={sendMessage}
+              disabled={!inputMessage.trim() || isLoading}
+              className="send-btn"
+            >
+              <Send size={20} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-async function saveSession() {
-    statusText.textContent = 'Session saved';
-}
-
-function addMessage(role, content, addToHistory = true) {
-    if (addToHistory) {
-        chatHistory.push({ role, content });
-    }
-
-    // Remove welcome message if present
-    const welcomeMsg = document.querySelector('.welcome-message');
-    if (welcomeMsg) {
-        welcomeMsg.remove();
-    }
-
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${role}`;
-    
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar';
-    avatar.textContent = role === 'user' ? '👤' : '🤖';
-    
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
-    contentDiv.textContent = content;
-    
-    const timeDiv = document.createElement('div');
-    timeDiv.className = 'message-time';
-    timeDiv.textContent = new Date().toLocaleTimeString();
-    
-    messageDiv.appendChild(avatar);
-    messageDiv.appendChild(contentDiv);
-    contentDiv.appendChild(timeDiv);
-    
-    chatMessages.appendChild(messageDiv);
-    
-    // Scroll to bottom
-    chatMessages.parentElement.scrollTop = chatMessages.parentElement.scrollHeight;
-}
-
-function showTypingIndicator() {
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'message assistant';
-    typingDiv.id = 'typing-indicator-' + Date.now();
-    
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar';
-    avatar.textContent = '🤖';
-    
-    const typing = document.createElement('div');
-    typing.className = 'message-content typing-indicator';
-    typing.innerHTML = '<span></span><span></span><span></span>';
-    
-    typingDiv.appendChild(avatar);
-    typingDiv.appendChild(typing);
-    chatMessages.appendChild(typingDiv);
-    
-    chatMessages.parentElement.scrollTop = chatMessages.parentElement.scrollHeight;
-    
-    return typingDiv.id;
-}
-
-function removeTypingIndicator(id) {
-    const indicator = document.getElementById(id);
-    if (indicator) {
-        indicator.remove();
-    }
-}
-
-function showError(message) {
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'error-message';
-    errorDiv.textContent = `❌ Error: ${message}`;
-    chatMessages.appendChild(errorDiv);
-    
-    setTimeout(() => {
-        errorDiv.remove();
-    }, 5000);
-    
-    chatMessages.parentElement.scrollTop = chatMessages.parentElement.scrollHeight;
-}
-
-function updateSendButton() {
-    sendBtn.disabled = isProcessing;
-    if (isProcessing) {
-        sendBtn.innerHTML = '<span>Processing...</span>';
-        statusText.textContent = 'Processing request...';
-    } else {
-        sendBtn.innerHTML = '<span>Send</span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
-        statusText.textContent = 'Ready';
-    }
-}
-
+export default App;
