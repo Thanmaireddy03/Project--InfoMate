@@ -101,6 +101,8 @@ func main() {
 	http.HandleFunc("/api/rag", handleRAG)
 	http.HandleFunc("/api/model", handleModel)
 	http.HandleFunc("/api/pdf", handlePDF)
+	http.HandleFunc("/api/history", handleHistory)
+	http.HandleFunc("/api/clear", handleClear)
 
 	// Serve static files
 	buildDir := "./frontend/build/"
@@ -200,7 +202,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 func handleSessions(w http.ResponseWriter, r *http.Request) {
 	// Add CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	if r.Method == "OPTIONS" {
@@ -239,6 +241,28 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+	} else if r.Method == http.MethodDelete {
+		// Delete session
+		session := r.URL.Query().Get("name")
+		if session == "" || session == "default" {
+			writeJSONError(w, http.StatusBadRequest, "Cannot delete default session")
+			return
+		}
+
+		// Delete session file
+		sessPath := sessionPath(session)
+		_ = os.Remove(sessPath)
+
+		// Delete index file
+		_ = os.Remove(indexPath(session))
+
+		// Remove from memory
+		delete(ragStates, session)
+		delete(models, session)
+		delete(docIndexes, session)
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 	}
 }
 
@@ -367,6 +391,64 @@ func handlePDF(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func handleHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := r.URL.Query().Get("session")
+	if session == "" {
+		session = "default"
+	}
+
+	messages, err := loadMessages(sessionPath(session))
+	if err != nil {
+		messages = []api.Message{}
+	}
+
+	// Convert to simple format for JSON
+	simpleMsgs := toSimple(messages)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"messages": simpleMsgs})
+}
+
+func handleClear(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Session string `json:"session"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+
+	session := req.Session
+	if session == "" {
+		session = "default"
+	}
+
+	// Clear messages but keep system message
+	sessPath := sessionPath(session)
+	system := "You are a concise assistant. Respond ONLY in English."
+	messages := []api.Message{{Role: "system", Content: system}}
+	_ = saveMessages(sessPath, messages)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }
 
 func writeJSONError(w http.ResponseWriter, status int, message string) {
