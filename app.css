@@ -80,6 +80,34 @@
   border-color: #3498db;
 }
 
+.session-item-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.session-item-wrapper .session-item {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.delete-session-btn {
+  background: transparent;
+  border: 1px solid #e74c3c;
+  color: #e74c3c;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.delete-session-btn:hover {
+  background: #e74c3c;
+  color: white;
+}
+
 .settings {
   flex: 1;
 }
@@ -242,9 +270,39 @@
   margin: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
 .session-info {
   color: #7f8c8d;
   font-size: 0.9rem;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.header-btn {
+  background: transparent;
+  border: 1px solid #bdc3c7;
+  color: #7f8c8d;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-btn:hover {
+  background: #f8f9fa;
+  border-color: #3498db;
+  color: #3498db;
 }
 
 .messages-container {
