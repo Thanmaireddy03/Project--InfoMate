@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Send, Upload, Settings, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Send, Upload, Settings, ToggleLeft, ToggleRight, Trash2, X, Download } from 'lucide-react';
 import './App.css';
 
 const API_BASE = 'http://localhost:8080/api';
@@ -72,6 +72,7 @@ function App() {
   useEffect(() => {
     loadSessions();
     loadContext();
+    loadHistory();
   }, [loadContext]);
 
   const createSession = async () => {
@@ -92,8 +93,73 @@ function App() {
 
   const switchSession = async (newSession) => {
     setSession(newSession);
-    setMessages([]);
+    await loadHistory(newSession);
     await loadContext();
+  };
+
+  const loadHistory = async (sessionName) => {
+    try {
+      const response = await axios.get(`${API_BASE}/history?session=${sessionName || session}`);
+      const msgs = response.data.messages || [];
+      // Filter out system messages for display
+      const displayMsgs = msgs.filter(m => m.role !== 'system');
+      setMessages(displayMsgs);
+    } catch (error) {
+      console.error('Failed to load history:', error);
+      setMessages([]);
+    }
+  };
+
+  const deleteSession = async (sessionName) => {
+    if (sessionName === 'default') {
+      alert('Cannot delete default session');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete session "${sessionName}"?`)) {
+      return;
+    }
+    try {
+      await axios.delete(`${API_BASE}/sessions?name=${sessionName}`);
+      setSessions(sessions.filter(s => s !== sessionName));
+      if (session === sessionName) {
+        setSession('default');
+        await loadHistory('default');
+        await loadContext();
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      alert('Failed to delete session');
+    }
+  };
+
+  const clearChat = async () => {
+    if (!window.confirm('Are you sure you want to clear all chat history?')) {
+      return;
+    }
+    try {
+      await axios.post(`${API_BASE}/clear`, { session });
+      setMessages([]);
+    } catch (error) {
+      console.error('Failed to clear chat:', error);
+      alert('Failed to clear chat');
+    }
+  };
+
+  const exportChat = () => {
+    const chatData = {
+      session,
+      date: new Date().toISOString(),
+      messages: messages
+    };
+    const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat-${session}-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const toggleRag = async () => {
@@ -205,13 +271,26 @@ function App() {
         <div className="sessions">
           <h3>Sessions</h3>
           {sessions.map(s => (
-            <button
-              key={s}
-              className={`session-item ${s === session ? 'active' : ''}`}
-              onClick={() => switchSession(s)}
-            >
-              {s}
-            </button>
+            <div key={s} className="session-item-wrapper">
+              <button
+                className={`session-item ${s === session ? 'active' : ''}`}
+                onClick={() => switchSession(s)}
+              >
+                {s}
+              </button>
+              {s !== 'default' && (
+                <button
+                  className="delete-session-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteSession(s);
+                  }}
+                  title="Delete session"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           ))}
         </div>
 
@@ -275,7 +354,21 @@ function App() {
       <div className="main-content">
         <div className="chat-header">
           <h1>AI Chat</h1>
-          <div className="session-info">Session: {session}</div>
+          <div className="header-actions">
+            <div className="session-info">Session: {session}</div>
+            <div className="header-buttons">
+              {messages.length > 0 && (
+                <>
+                  <button className="header-btn" onClick={exportChat} title="Export chat">
+                    <Download size={18} />
+                  </button>
+                  <button className="header-btn" onClick={clearChat} title="Clear chat">
+                    <Trash2 size={18} />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="messages-container">
